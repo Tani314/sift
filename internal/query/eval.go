@@ -58,6 +58,12 @@ func evalCompare(c Compare, r record.Record) (bool, error) {
 		return got == c.Value, nil
 	case "!=":
 		return got != c.Value, nil
+	case "=~", "!~":
+		re, err := pattern(c.Value)
+		if err != nil {
+			return false, err
+		}
+		return re.MatchString(got) == (c.Op == "=~"), nil
 	case "<", "<=", ">", ">=":
 		return compareOrdered(c.Op, got, c.Value)
 	}
