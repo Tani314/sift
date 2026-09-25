@@ -8,6 +8,7 @@ package source
 
 import (
 	"bufio"
+	"compress/gzip"
 	"fmt"
 	"io"
 	"os"
@@ -102,7 +103,11 @@ func Sample(path string, n int) ([]string, error) {
 // errEnough stops a scan early without being a real failure.
 var errEnough = fmt.Errorf("sample complete")
 
-// open resolves a path to a reader.
+// open resolves a path to a reader, transparently decompressing gzip.
+//
+// Rotated logs are almost always gzipped, and needing to remember which of
+// app.log and app.log.1.gz can be searched directly is exactly the friction
+// that sends people back to zcat and a pipeline.
 func open(path string) (io.Reader, string, io.Closer, error) {
 	if path == Stdin {
 		return os.Stdin, "(stdin)", nil, nil
@@ -112,5 +117,28 @@ func open(path string) (io.Reader, string, io.Closer, error) {
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("opening %s: %w", path, err)
 	}
-	return f, path, f, nil
+
+	if !strings.HasSuffix(path, ".gz") {
+		return f, path, f, nil
+	}
+
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		f.Close()
+		return nil, "", nil, fmt.Errorf("reading %s as gzip: %w", path, err)
+	}
+	return gz, path, multiCloser{gz, f}, nil
+}
+
+// multiCloser closes a decompressor and the file underneath it.
+type multiCloser []io.Closer
+
+func (m multiCloser) Close() error {
+	var firstErr error
+	for _, c := range m {
+		if err := c.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
